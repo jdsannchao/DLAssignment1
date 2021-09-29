@@ -227,7 +227,7 @@ class_attr=[7,3,3,4,6,3]
 learning_rate = 0.1 #initial_lr
 epochs = 10  #10 
 
-arch='ResNet18'
+arch='ResNet50'
 trans=False
 loss='BCE'
 FL_gamma=2 # tuning from [0.5,1,1.5,2]
