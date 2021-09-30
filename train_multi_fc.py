@@ -116,29 +116,29 @@ class predImageDataset(Dataset):
 
 def train_trans(augment=True):
     if augment:
-        shape_aug = transforms.RandomResizedCrop((200, 200), scale=(0.1, 1), ratio=(0.5, 2))
-        color_aug = transforms.ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.5)
-
         train_augs = transforms.Compose([transforms.ToPILImage(),
-            transforms.RandomHorizontalFlip(),
-            shape_aug,
-            color_aug,
-            transforms.Resize((224, 224)),
-            transforms.ToTensor()])
+            transforms.Resize((224, 224)),   
+            transforms.RandomHorizontalFlip(p=0.9),
+            # transforms.CenterCrop(224),
+            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.3),
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+        ])
 
     else:
         train_augs=transforms.Compose([transforms.ToPILImage(),
             transforms.Resize((224, 224)),
-            transforms.ToTensor()])
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
 
     return train_augs
 
 
 def test_trans():
-    test_augs = transforms.Compose(
-        [transforms.ToPILImage(),
-        transforms.Resize((224, 224)),
-        transforms.ToTensor()])
+    test_augs = transforms.Compose([transforms.ToPILImage(),
+                transforms.Resize((224, 224)),
+                transforms.ToTensor(),
+                transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
 
     return test_augs
 
@@ -156,10 +156,12 @@ class MyModel(nn.Module):
 
         num_ftrs = self.model_resnet.fc.in_features
         self.model_resnet.fc = nn.Identity()
-        self.fc1 = nn.Linear(num_ftrs, class_attr[0])
+        self.fc1 =nn.Sequential(nn.Linear(num_ftrs, 1024),nn.ReLU(True),
+                                nn.Linear(1024, class_attr[0])) 
         self.fc2 = nn.Linear(num_ftrs, class_attr[1])
         self.fc3 = nn.Linear(num_ftrs, class_attr[2])
-        self.fc4 = nn.Linear(num_ftrs, class_attr[3])
+        self.fc4 =nn.Sequential(nn.Linear(num_ftrs, 1024),nn.ReLU(True),
+                                nn.Linear(1024, class_attr[3])) 
         self.fc5 = nn.Linear(num_ftrs, class_attr[4])
         self.fc6 = nn.Linear(num_ftrs, class_attr[5])
 
@@ -183,7 +185,9 @@ def train_loop(dataloader, model, loss_fn, optimizer):
         pred1,pred2,pred3,pred4,pred5,pred6 = model(X)
         # print(pred1.type)
         # y=y.unsqueeze(1)
-        loss = 2*loss_fn(pred1, y[:,0])+loss_fn(pred2, y[:,1])+loss_fn(pred3, y[:,2])+loss_fn(pred4, y[:,3])+loss_fn(pred5, y[:,4])+loss_fn(pred6, y[:,5])
+        loss = 2*loss_fn(pred1, y[:,0])+loss_fn(pred2, y[:,1])+loss_fn(pred3, y[:,2])+2*loss_fn(pred4, y[:,3])+loss_fn(pred5, y[:,4])+loss_fn(pred6, y[:,5])
+        # loss = loss_fn(pred1, y[:,0])
+        
         # Backpropagation
         optimizer.zero_grad()
         loss.backward()
@@ -193,7 +197,7 @@ def train_loop(dataloader, model, loss_fn, optimizer):
             loss, current = loss.item(), batch * len(X)
             print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
         
-        scheduler.step()
+        # scheduler.step()
 
 
 
@@ -211,6 +215,7 @@ def acc(dataloader, model, loss_fn):
         for X, y in dataloader:
             X,y =X.to(device), y.to(device)
             pred1,pred2,pred3,pred4,pred5,pred6 = model(X)
+            # test_loss += loss_fn(pred1, y[:,0])
             test_loss += loss_fn(pred1, y[:,0]).item()+loss_fn(pred2, y[:,1]).item()+loss_fn(pred3, y[:,2]).item()+loss_fn(pred4, y[:,3]).item()+loss_fn(pred5, y[:,4]).item()+loss_fn(pred6, y[:,5]).item()
             correct1 += (pred1.argmax(1) == y[:,0]).type(torch.float).sum().item()
             correct2 += (pred2.argmax(1) == y[:,1]).type(torch.float).sum().item()
@@ -259,9 +264,11 @@ class_attr=[7,3,3,4,6,3]
 ## model paremeters
 BS=64 # Batch Size
 
-learning_rate = 0.1 * BS/256 # initial_lr, linear scaling
+# learning_rate = 0.1* 0.1 * BS/256 # initial_lr, linear scaling
 
-epochs = 10  #10,20,30  
+learning_rate = 0.1   # 和0.1的比 小四倍直接就不train了... 哎 
+
+epochs = 20  #10,20,30  
 
 arch='ResNet18' # 'ResNet50' AWS上，本地只能测试18(就这还老没空间...)
 
@@ -284,6 +291,11 @@ model.to(device)
 # torch.manual_seed(17) # Data augmentation involves randomness.
 
 
+## weight = weights 
+# weights=img_labels[1].value_counts(normalize=True).astype(np.float32).sort_index()
+# weights=torch.tensor(weights)
+# weights=weights.to(device)
+
 ## Dataloader
 
 training_data = trainImageDataset(train_file, img_dir, transform=train_trans(augment))
@@ -292,10 +304,12 @@ validation_data = trainImageDataset(val_file, img_dir,transform=test_trans())
 train_dataloader = DataLoader(training_data, batch_size=BS, shuffle=True)
 val_dataloader = DataLoader(validation_data, batch_size=BS, shuffle=True)
 
-loss_fn = nn.CrossEntropyLoss() # 这里应该调成一个可以修改的模式。回头再说....
+# loss_fn = nn.CrossEntropyLoss(weight=weights) # 这里应该调成一个可以修改的模式。回头再说....
+loss_fn = nn.CrossEntropyLoss() 
+# optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate,momentum=0.9)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
+# scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1) #例子是0.1 但总觉得那样太小根本不够...
 
-optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
 
 ## training
 model.train()
