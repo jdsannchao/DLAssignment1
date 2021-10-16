@@ -1,4 +1,4 @@
-create work dir 
+create working dir 
 
 ./epochloss
 ./epochacc
